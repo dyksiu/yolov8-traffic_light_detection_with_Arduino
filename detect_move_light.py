@@ -2,8 +2,6 @@ import cv2
 import time
 import serial
 import subprocess
-import sys
-import os
 from ultralytics import YOLO
 from tkinter import Tk, Label, Button, filedialog, Scale, HORIZONTAL, Entry, StringVar
 
@@ -12,10 +10,10 @@ class App:
     def __init__(self, root):
         self.root = root
         self.root.title("Detektor świateł drogowych")
-        self.root.geometry("420x300")  # -> stałe rozmiary okna
-        self.root.resizable(False,False) # -> blokada rozciagnania okna
+        self.root.geometry("420x320") # -> stałe rozmiary okna
+        self.root.resizable(False, False) # -> blokada rozciagnania okna
         self.arduino = None
-        self.model = YOLO("runs/detect/train24/weights/best.pt") # -> sciezka wyboru modelu Yolov8m
+        self.model = YOLO("runs/detect/train24/weights/best.pt")  # -> sciezka wyboru modelu Yolov8m
 
         # Port COM wpisywany przez użytkownika - domyslnie ustawiony na COM3 (potem se mozna wybrać)
         Label(root, text="Port COM Arduino:").pack()
@@ -26,11 +24,9 @@ class App:
 
         # Przycisk polaczenia z Arduino
         Button(root, text="Połącz z Arduino", command=self.connect_to_arduino).pack(pady=5)
-
-        # Przycisk do wgrywania kodu do Arduino
         Button(root, text="Wgraj kod do Arduino", command=self.upload_code_to_arduino).pack(pady=5)
 
-
+        # Przycisk do wgrywania kodu do Arduino
         self.status_label = Label(root, text="Status: Niepołączono")
         self.status_label.pack()
 
@@ -46,6 +42,9 @@ class App:
         self.conf_slider.pack()
 
         Button(root, text="Wybierz wideo", command=self.select_video).pack(pady=10)
+
+        self.best_detection_label = Label(root, text="")
+        self.best_detection_label.pack(pady=5)
 
     ## Funkcja - polaczenie z Arduino za pomoca serial portu
     def connect_to_arduino(self):
@@ -83,7 +82,7 @@ class App:
             subprocess.run([arduino_cli_path, "upload", "-p", port, "--fqbn", fqbn, sketch_path], check=True)
 
             ## 2. Po udanym uploadzie – ponowne połączenie z Arduino
-            time.sleep(2)  # odczekaj chwilę na reset Arduino
+            time.sleep(2)
             self.arduino = serial.Serial(port, 9600)
             time.sleep(2)
 
@@ -108,6 +107,9 @@ class App:
         conf_value = self.conf_slider.get() / 100
         cap = cv2.VideoCapture(video_path)
 
+        max_score = 0
+        max_label = None
+
         while cap.isOpened():
             ret, frame = cap.read()
             if not ret:
@@ -118,6 +120,7 @@ class App:
 
             boxes = results[0].boxes
             labels = boxes.cls.tolist() if boxes is not None else []
+            scores = boxes.conf.tolist() if boxes is not None else []
 
             ## Przypisywanie liter w zalezności od wykrytego labelu -> labele są opisane w data.yaml
             # w przypadku tego projektu:
@@ -126,24 +129,33 @@ class App:
             # 2 - red yellow light
             # 3 - yellow light
             if self.arduino:
-                command = ""
-                if 1 in labels:  # green_light
-                    command += "G"
-                if 0 in labels:  # red_light
-                    command += "R"
-                if 2 in labels:  # red_yellow_light
-                    command += "R"
-                    command += "Y"
-                if 3 in labels:  # yellow_light
-                    command += "Y"
+                if scores and labels:
+                    max_idx = scores.index(max(scores))
+                    current_score = scores[max_idx]
+                    current_label = int(labels[max_idx])
 
-                command = "".join(sorted(set(command)))
-                if not command:
-                    command = "N"
+                    label_map = {
+                        0: "G", # G -> GREEN -> ZIELONE SWIATLO
+                        3: "Y", # Y -> YELLOW -> ZOLTE SWIATLO
+                        2: "RY", # RY -> RED-YELLOW -> CZERWONO-ZOLTE SWIATLO
+                        1: "R"  # R -> RED -> CZERWONE SWIATLO
+                    }
+                    # w tym miejscu przypisuje chara w zaleznosci od wykrytego labela
+                    # i biore confa
+                    label_char = label_map.get(current_label, "N")
+                    confidence_percent = int(current_score * 100)
+                    command = f"{label_char}:{confidence_percent}"
+                else:
+                    command = "N:0"
 
-                print(f"Komenda do Arduino: {command}")
                 self.arduino.write((command + '\n').encode())
                 self.arduino.flush()
+
+            # Petla do zapamietywania najwyzszego confa
+            for lbl, score in zip(labels, scores):
+                if score > max_score:
+                    max_score = score
+                    max_label = int(lbl)
 
             cv2.imshow("Detektor świateł drogowych", annotated)
             if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -151,6 +163,40 @@ class App:
 
         cap.release()
         cv2.destroyAllWindows()
+
+        # Po zakończeniu filmu – wysłanie najlepszego wykrycia
+        if self.arduino:
+            if max_label is not None:
+                label_map = {
+                    0: "G",
+                    3: "Y",
+                    2: "RY",
+                    1: "R"
+                }
+                label_names = {
+                    0: "Zielone",
+                    3: "Żółte",
+                    2: "Czerwono-żółte",
+                    1: "Czerwone"
+                }
+
+                label_char = label_map.get(max_label, "N")
+                label_name = label_names.get(max_label, "Nieznane")
+                confidence_percent = int(max_score * 100)
+                final_command = f"{label_char}:{confidence_percent}"
+
+                self.arduino.write((final_command + '\n').encode())
+                self.arduino.flush()
+
+                self.best_detection_label.config(
+                    text=f"Najpewniejsze: {label_name} światło ({confidence_percent}%)"
+                )
+                print(f"[Koniec filmu] Najlepsze wykrycie: {final_command}")
+            else:
+                self.arduino.write(b"N:0\n")
+                self.arduino.flush()
+                self.best_detection_label.config(text="Nie wykryto świateł.")
+                print("[Koniec filmu] Nie wykryto świateł.")
 
 if __name__ == "__main__":
     root = Tk()
