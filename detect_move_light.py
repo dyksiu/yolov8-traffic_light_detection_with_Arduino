@@ -3,7 +3,7 @@ import time
 import serial
 import subprocess
 from ultralytics import YOLO
-from tkinter import Tk, Label, Button, filedialog, Scale, HORIZONTAL, Entry, StringVar
+from tkinter import Tk, Label, Button, filedialog, Scale, HORIZONTAL, Entry, StringVar, Frame
 
 class App:
     ## INICJALIZACJA GUI
@@ -15,35 +15,81 @@ class App:
         self.arduino = None
         self.model = YOLO("runs/detect/train24/weights/best.pt")  # -> sciezka wyboru modelu Yolov8m
 
-        # Port COM wpisywany przez użytkownika - domyslnie ustawiony na COM3 (potem se mozna wybrać)
-        Label(root, text="Port COM Arduino:").pack()
+        self.main_frame = Frame(root)
+        self.main_frame.pack(fill="both", expand=True)
+
+        self.create_start_menu()
+
+    ## EKRAN STARTOWY Z WYBOREM TRYBU
+    def create_start_menu(self):
+        for widget in self.main_frame.winfo_children():
+            widget.destroy()
+
+        Label(self.main_frame, text="Wybierz tryb detekcji").pack(pady=20)
+
+        Button(self.main_frame, text="Detekcja bez Arduino", width=25, command=self.setup_without_arduino).pack(pady=10)
+        Button(self.main_frame, text="Detekcja z Arduino", width=25, command=self.setup_with_arduino).pack(pady=10)
+
+    ## INTERFEJS BEZ ARDUINO
+    def setup_without_arduino(self):
+        for widget in self.main_frame.winfo_children():
+            widget.destroy()
+
+        Label(self.main_frame, text="Tryb: Detekcja bez Arduino").pack(pady=10)
+
+        # Suwak do wyboru poziomu ufności modelu - domyślnie 25%
+        self.conf_label = Label(self.main_frame, text="Confidence: 0.25")
+        self.conf_label.pack()
+
+        self.conf_slider = Scale(self.main_frame, from_=5, to=95, orient=HORIZONTAL, command=self.update_conf_label)
+        self.conf_slider.set(25)
+        self.conf_slider.pack()
+
+        Button(self.main_frame, text="Wybierz wideo", command=self.select_video_without_arduino).pack(pady=10)
+
+        self.best_detection_label = Label(self.main_frame, text="")  # -> nowy label do pokazywania najlepszego wyniku
+        self.best_detection_label.pack(pady=5)
+
+        # Przycisk "powrot" -> powrot do poprzedniej warstwy
+        Button(self.main_frame, text="Powrót", command=self.create_start_menu).pack(pady=10)
+
+    ## INTERFEJS Z ARDUINO
+    def setup_with_arduino(self):
+        for widget in self.main_frame.winfo_children():
+            widget.destroy()
+
+        Label(self.main_frame, text="Port COM Arduino:").pack()
         self.com_port = StringVar()
-        self.com_entry = Entry(root, textvariable=self.com_port)
+        self.com_entry = Entry(self.main_frame, textvariable=self.com_port)
         self.com_entry.insert(0, "COM3")
         self.com_entry.pack()
 
         # Przycisk polaczenia z Arduino
-        Button(root, text="Połącz z Arduino", command=self.connect_to_arduino).pack(pady=5)
-        Button(root, text="Wgraj kod do Arduino", command=self.upload_code_to_arduino).pack(pady=5)
+        Button(self.main_frame, text="Połącz z Arduino", command=self.connect_to_arduino).pack(pady=5)
+        Button(self.main_frame, text="Wgraj kod do Arduino", command=self.upload_code_to_arduino).pack(pady=5)
 
         # Przycisk do wgrywania kodu do Arduino
-        self.status_label = Label(root, text="Status: Niepołączono")
+        self.status_label = Label(self.main_frame, text="Status: Niepołączono")
         self.status_label.pack()
 
         # Okienko wyboru filmu po kliknieciu
-        Label(root, text="Wybierz plik MP4 i ustaw próg confidence").pack(pady=10)
+        Label(self.main_frame, text="Wybierz plik MP4 i ustaw próg confidence").pack(pady=10)
 
         # Suwak do wyboru poziomu ufności modelu - domyślnie 25%
-        self.conf_label = Label(root, text="Confidence: 0.25")
+        self.conf_label = Label(self.main_frame, text="Confidence: 0.25")
         self.conf_label.pack()
 
-        self.conf_slider = Scale(root, from_=5, to=95, orient=HORIZONTAL, command=self.update_conf_label)
+        self.conf_slider = Scale(self.main_frame, from_=5, to=95, orient=HORIZONTAL, command=self.update_conf_label)
         self.conf_slider.set(25)
         self.conf_slider.pack()
 
-        Button(root, text="Wybierz wideo", command=self.select_video).pack(pady=10)
+        # Przycisk - wyboru wideo
+        Button(self.main_frame, text="Wybierz wideo", command=self.select_video_with_arduino).pack(pady=10)
 
-        self.best_detection_label = Label(root, text="")
+        # Przycisk "powrot" - do poprzedniej sceny
+        Button(self.main_frame, text="Powrót", command=self.create_start_menu).pack(pady=5)
+
+        self.best_detection_label = Label(self.main_frame, text="")
         self.best_detection_label.pack(pady=5)
 
     ## Funkcja - polaczenie z Arduino za pomoca serial portu
@@ -98,8 +144,64 @@ class App:
     def update_conf_label(self, val):
         self.conf_label.config(text=f"Confidence: {int(val)/100:.2f}")
 
-    ## Funkcja - wybor filmu
-    def select_video(self):
+    ## Funkcja - wybor filmu (dla trybu bez Arduino)
+    def select_video_without_arduino(self):
+        video_path = filedialog.askopenfilename(filetypes=[("MP4 files", "*.mp4")])
+        if not video_path:
+            return
+
+        conf_value = self.conf_slider.get() / 100
+        cap = cv2.VideoCapture(video_path)
+
+        max_score = 0
+        max_label = None
+
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            results = self.model(frame, conf=conf_value, device=0)
+            annotated = results[0].plot()
+
+            boxes = results[0].boxes
+            labels = boxes.cls.tolist() if boxes is not None else []
+            scores = boxes.conf.tolist() if boxes is not None else []
+
+            # Petla do zapamietywania najwyzszego confa
+            for lbl, score in zip(labels, scores):
+                if score > max_score:
+                    max_score = score
+                    max_label = int(lbl)
+
+            cv2.imshow("Detektor świateł drogowych (bez Arduino)", annotated)
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+
+        cap.release()
+        cv2.destroyAllWindows()
+
+        # Po zakończeniu – pokazanie najlepszego wyniku na GUI
+        if max_label is not None:
+            label_names = {
+                0: "Zielone",
+                3: "Żółte",
+                2: "Czerwono-żółte",
+                1: "Czerwone"
+            }
+
+            label_name = label_names.get(max_label, "Nieznane")
+            confidence_percent = int(max_score * 100)
+            self.best_detection_label.config(
+                text=f"Najpewniejsze: {label_name} światło ({confidence_percent}%)"
+            )
+            print(f"[Koniec filmu] Najlepsze wykrycie: {label_name} ({confidence_percent}%)")
+        else:
+            self.best_detection_label.config(text="Nie wykryto świateł.")
+            print("[Koniec filmu] Nie wykryto świateł.")
+
+    ## Funkcja - wybor filmu (dla trybu z Arduino)
+    def select_video_with_arduino(self):
         video_path = filedialog.askopenfilename(filetypes=[("MP4 files", "*.mp4")])
         if not video_path:
             return
