@@ -16,7 +16,7 @@ class App:
         self.model = YOLO("runs/detect/train24/weights/best.pt")  # -> sciezka wyboru modelu Yolov8m
 
         self.use_roi = BooleanVar()
-        self.lane_choice = StringVar(value="Środkowy")  # Domyślnie środkowy
+        self.lane_choice = StringVar(value="Środkowy")  # -> ustawiamy domyslnie srodkowy pas w trybie ROI
 
         self.main_frame = Frame(root)
         self.main_frame.pack(fill="both", expand=True)
@@ -238,7 +238,7 @@ class App:
                         filtered_scores.append(score)
                         filtered_boxes.append(box)
 
-                # Rysuj tylko filtrowane boxy
+                # Rysuj tylko filtrowane boxy -> reszta nie jest brana pod uwage
                 for box, lbl, score in zip(filtered_boxes, filtered_labels, filtered_scores):
                     x1, y1, x2, y2 = map(int, box)
                     label_names = {
@@ -252,7 +252,8 @@ class App:
                     cv2.putText(annotated, label_text, (x1, y1 - 10),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
-                # Rysuj żółty overlay ROI
+                # zolty prostokat w trybie roi dla wybranej strony
+                # mozna zmienic kolor z lapy jak trzeba
                 if self.use_roi.get():
                     overlay = annotated.copy()
                     cv2.rectangle(overlay, (x_min, 0), (x_max, h), (0, 255, 255), -1)
@@ -340,7 +341,7 @@ class App:
                         filtered_scores.append(score)
                         filtered_boxes.append(box)
 
-                # Rysuj tylko filtrowane boxy
+                # Rysuj tylko filtrowane boxy -> reszta nie jest brana pod uwage
                 for box, lbl, score in zip(filtered_boxes, filtered_labels, filtered_scores):
                     x1, y1, x2, y2 = map(int, box)
                     label_names = {
@@ -354,14 +355,15 @@ class App:
                     cv2.putText(annotated, label_text, (x1, y1 - 10),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
-                # Rysuj żółty overlay ROI
+                  # zolty prostokat w trybie roi dla wybranej strony
+                # mozna zmienic kolor z lapy jak trzeba
                 if roi_active:
                     overlay = annotated.copy()
                     cv2.rectangle(overlay, (x_min, 0), (x_max, h), (0, 255, 255), -1)
                     alpha = 0.3
                     cv2.addWeighted(overlay, alpha, annotated, 1 - alpha, 0, annotated)
 
-                # Arduino — wysyłamy NAJPEWNIEJSZE wykrycie z ROI
+                # Wyslanie najwyzszego conf do Arduino z obszaru ROI
                 if self.arduino:
                     if filtered_scores and filtered_labels:
                         max_idx = filtered_scores.index(max(filtered_scores))
@@ -383,7 +385,7 @@ class App:
                     self.arduino.write((command + '\n').encode())
                     self.arduino.flush()
 
-                # Pamiętaj najlepsze ogólne wykrycie z ROI
+                # Zapisuje najlepszy wynik conf dla ROI
                 for lbl, score in zip(filtered_labels, filtered_scores):
                     if score > max_score:
                         max_score = score
@@ -399,7 +401,7 @@ class App:
         cap.release()
         cv2.destroyAllWindows()
 
-        # Po zakończeniu filmu – wysłanie najlepszego wykrycia
+        # Wysylanie najlepszego wykrycia conf do Arduino po skonczeniu filmu lub przerwaniu
         if self.arduino:
             if max_label is not None:
                 label_map = {
