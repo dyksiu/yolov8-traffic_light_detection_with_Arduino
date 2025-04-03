@@ -3,17 +3,20 @@ import time
 import serial
 import subprocess
 from ultralytics import YOLO
-from tkinter import Tk, Label, Button, filedialog, Scale, HORIZONTAL, Entry, StringVar, Frame
+from tkinter import Tk, Label, Button, filedialog, Scale, HORIZONTAL, Entry, StringVar, Frame, BooleanVar, OptionMenu
 
 class App:
     ## INICJALIZACJA GUI
     def __init__(self, root):
         self.root = root
         self.root.title("Detektor świateł drogowych")
-        self.root.geometry("420x320") # -> stałe rozmiary okna
+        self.root.geometry("420x420") # -> stałe rozmiary okna
         self.root.resizable(False, False) # -> blokada rozciagnania okna
         self.arduino = None
         self.model = YOLO("runs/detect/train24/weights/best.pt")  # -> sciezka wyboru modelu Yolov8m
+
+        self.use_roi = BooleanVar()
+        self.lane_choice = StringVar(value="Środkowy")  # Domyślnie środkowy
 
         self.main_frame = Frame(root)
         self.main_frame.pack(fill="both", expand=True)
@@ -40,6 +43,14 @@ class App:
         # Suwak do wyboru poziomu ufności modelu - domyślnie 25%
         self.conf_label = Label(self.main_frame, text="Confidence: 0.25")
         self.conf_label.pack()
+
+        # Checkbox do ROI
+        self.roi_checkbox = Button(self.main_frame, text="Włącz obszar zainteresowania", command=self.toggle_roi_menu)
+        self.roi_checkbox.pack(pady=5)
+
+        self.lane_dropdown = OptionMenu(self.main_frame, self.lane_choice, "Lewy", "Środkowy", "Prawy")
+        self.lane_dropdown.pack(pady=5)
+        self.lane_dropdown.pack_forget()  # ukryj na start
 
         self.conf_slider = Scale(self.main_frame, from_=5, to=95, orient=HORIZONTAL, command=self.update_conf_label)
         self.conf_slider.set(25)
@@ -78,6 +89,14 @@ class App:
         # Suwak do wyboru poziomu ufności modelu - domyślnie 25%
         self.conf_label = Label(self.main_frame, text="Confidence: 0.25")
         self.conf_label.pack()
+
+        # Checkbox do ROI
+        self.roi_checkbox = Button(self.main_frame, text="Włącz obszar zainteresowania", command=self.toggle_roi_menu)
+        self.roi_checkbox.pack(pady=5)
+
+        self.lane_dropdown = OptionMenu(self.main_frame, self.lane_choice, "Lewy", "Środkowy", "Prawy")
+        self.lane_dropdown.pack(pady=5)
+        self.lane_dropdown.pack_forget()  # ukryj na start
 
         self.conf_slider = Scale(self.main_frame, from_=5, to=95, orient=HORIZONTAL, command=self.update_conf_label)
         self.conf_slider.set(25)
@@ -144,6 +163,31 @@ class App:
     def update_conf_label(self, val):
         self.conf_label.config(text=f"Confidence: {int(val)/100:.2f}")
 
+    def toggle_roi_menu(self):
+        self.use_roi.set(not self.use_roi.get())
+        if self.use_roi.get():
+            self.roi_checkbox.config(text="Wyłącz obszar zainteresowania")
+            self.lane_dropdown.pack(pady=5)
+        else:
+            self.roi_checkbox.config(text="Włącz obszar zainteresowania")
+            self.lane_dropdown.pack_forget()
+
+    def apply_lane_roi(self, frame):
+        h, w, _ = frame.shape
+        lane = self.lane_choice.get()
+
+        if lane == "Lewy":
+            roi = frame[:, :w // 3]
+        elif lane == "Środkowy":
+            roi = frame[:, w // 3: 2 * w // 3]
+        elif lane == "Prawy":
+            roi = frame[:, 2 * w // 3:]
+        else:
+            roi = frame  # fallback
+
+        return roi
+
+
     ## Funkcja - wybor filmu (dla trybu bez Arduino)
     def select_video_without_arduino(self):
         video_path = filedialog.askopenfilename(filetypes=[("MP4 files", "*.mp4")])
@@ -162,17 +206,66 @@ class App:
                 break
 
             results = self.model(frame, conf=conf_value, device=0)
-            annotated = results[0].plot()
-
             boxes = results[0].boxes
-            labels = boxes.cls.tolist() if boxes is not None else []
-            scores = boxes.conf.tolist() if boxes is not None else []
 
-            # Petla do zapamietywania najwyzszego confa
-            for lbl, score in zip(labels, scores):
-                if score > max_score:
-                    max_score = score
-                    max_label = int(lbl)
+            annotated = frame.copy()
+
+            if boxes is not None:
+                labels = boxes.cls.tolist()
+                scores = boxes.conf.tolist()
+                xyxy = boxes.xyxy.tolist()
+
+                filtered_labels, filtered_scores, filtered_boxes = [], [], []
+
+                h, w, _ = frame.shape
+                roi_active = self.use_roi.get()
+
+                if roi_active:
+                    if self.lane_choice.get() == "Lewy":
+                        x_min, x_max = 0, w // 3
+                    elif self.lane_choice.get() == "Środkowy":
+                        x_min, x_max = w // 3, 2 * w // 3
+                    elif self.lane_choice.get() == "Prawy":
+                        x_min, x_max = 2 * w // 3, w
+                    else:
+                        x_min, x_max = 0, w
+
+                for box, lbl, score in zip(xyxy, labels, scores):
+                    x1, y1, x2, y2 = box
+                    cx = (x1 + x2) / 2
+                    if not self.use_roi.get() or (x_min <= cx <= x_max):
+                        filtered_labels.append(lbl)
+                        filtered_scores.append(score)
+                        filtered_boxes.append(box)
+
+                # Rysuj tylko filtrowane boxy
+                for box, lbl, score in zip(filtered_boxes, filtered_labels, filtered_scores):
+                    x1, y1, x2, y2 = map(int, box)
+                    label_names = {
+                        0: "Zielone",
+                        1: "Czerwone",
+                        2: "Czerw.-żółte",
+                        3: "Żółte"
+                    }
+                    label_text = f"{label_names.get(int(lbl), 'Nieznane')} ({int(score * 100)}%)"
+                    cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                    cv2.putText(annotated, label_text, (x1, y1 - 10),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+
+                # Rysuj żółty overlay ROI
+                if self.use_roi.get():
+                    overlay = annotated.copy()
+                    cv2.rectangle(overlay, (x_min, 0), (x_max, h), (0, 255, 255), -1)
+                    alpha = 0.3
+                    cv2.addWeighted(overlay, alpha, annotated, 1 - alpha, 0, annotated)
+
+                for lbl, score in zip(filtered_labels, filtered_scores):
+                    if score > max_score:
+                        max_score = score
+                        max_label = int(lbl)
+
+            else:
+                filtered_labels, filtered_scores = [], []
 
             cv2.imshow("Detektor świateł drogowych (bez Arduino)", annotated)
             if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -181,7 +274,6 @@ class App:
         cap.release()
         cv2.destroyAllWindows()
 
-        # Po zakończeniu – pokazanie najlepszego wyniku na GUI
         if max_label is not None:
             label_names = {
                 0: "Zielone",
@@ -189,7 +281,6 @@ class App:
                 2: "Czerwono-żółte",
                 1: "Czerwone"
             }
-
             label_name = label_names.get(max_label, "Nieznane")
             confidence_percent = int(max_score * 100)
             self.best_detection_label.config(
@@ -218,46 +309,88 @@ class App:
                 break
 
             results = self.model(frame, conf=conf_value, device=0)
-            annotated = results[0].plot()
-
             boxes = results[0].boxes
-            labels = boxes.cls.tolist() if boxes is not None else []
-            scores = boxes.conf.tolist() if boxes is not None else []
+            annotated = frame.copy()
 
-            ## Przypisywanie liter w zalezności od wykrytego labelu -> labele są opisane w data.yaml
-            # w przypadku tego projektu:
-            # 0 - green light
-            # 1 - red light
-            # 2 - red yellow light
-            # 3 - yellow light
-            if self.arduino:
-                if scores and labels:
-                    max_idx = scores.index(max(scores))
-                    current_score = scores[max_idx]
-                    current_label = int(labels[max_idx])
+            if boxes is not None:
+                labels = boxes.cls.tolist()
+                scores = boxes.conf.tolist()
+                xyxy = boxes.xyxy.tolist()
 
-                    label_map = {
-                        0: "G", # G -> GREEN -> ZIELONE SWIATLO
-                        3: "Y", # Y -> YELLOW -> ZOLTE SWIATLO
-                        2: "RY", # RY -> RED-YELLOW -> CZERWONO-ZOLTE SWIATLO
-                        1: "R"  # R -> RED -> CZERWONE SWIATLO
+                filtered_labels, filtered_scores, filtered_boxes = [], [], []
+
+                h, w, _ = frame.shape
+                roi_active = self.use_roi.get()
+
+                if roi_active:
+                    if self.lane_choice.get() == "Lewy":
+                        x_min, x_max = 0, w // 3
+                    elif self.lane_choice.get() == "Środkowy":
+                        x_min, x_max = w // 3, 2 * w // 3
+                    elif self.lane_choice.get() == "Prawy":
+                        x_min, x_max = 2 * w // 3, w
+                    else:
+                        x_min, x_max = 0, w
+
+                for box, lbl, score in zip(xyxy, labels, scores):
+                    x1, y1, x2, y2 = box
+                    cx = (x1 + x2) / 2
+                    if not roi_active or (x_min <= cx <= x_max):
+                        filtered_labels.append(lbl)
+                        filtered_scores.append(score)
+                        filtered_boxes.append(box)
+
+                # Rysuj tylko filtrowane boxy
+                for box, lbl, score in zip(filtered_boxes, filtered_labels, filtered_scores):
+                    x1, y1, x2, y2 = map(int, box)
+                    label_names = {
+                        0: "Zielone",
+                        1: "Czerwone",
+                        2: "Czerw.-żółte",
+                        3: "Żółte"
                     }
-                    # w tym miejscu przypisuje chara w zaleznosci od wykrytego labela
-                    # i biore confa
-                    label_char = label_map.get(current_label, "N")
-                    confidence_percent = int(current_score * 100)
-                    command = f"{label_char}:{confidence_percent}"
-                else:
-                    command = "N:0"
+                    label_text = f"{label_names.get(int(lbl), 'Nieznane')} ({int(score * 100)}%)"
+                    cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                    cv2.putText(annotated, label_text, (x1, y1 - 10),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
-                self.arduino.write((command + '\n').encode())
-                self.arduino.flush()
+                # Rysuj żółty overlay ROI
+                if roi_active:
+                    overlay = annotated.copy()
+                    cv2.rectangle(overlay, (x_min, 0), (x_max, h), (0, 255, 255), -1)
+                    alpha = 0.3
+                    cv2.addWeighted(overlay, alpha, annotated, 1 - alpha, 0, annotated)
 
-            # Petla do zapamietywania najwyzszego confa
-            for lbl, score in zip(labels, scores):
-                if score > max_score:
-                    max_score = score
-                    max_label = int(lbl)
+                # Arduino — wysyłamy NAJPEWNIEJSZE wykrycie z ROI
+                if self.arduino:
+                    if filtered_scores and filtered_labels:
+                        max_idx = filtered_scores.index(max(filtered_scores))
+                        current_score = filtered_scores[max_idx]
+                        current_label = int(filtered_labels[max_idx])
+
+                        label_map = {
+                            0: "G",
+                            3: "Y",
+                            2: "RY",
+                            1: "R"
+                        }
+                        label_char = label_map.get(current_label, "N")
+                        confidence_percent = int(current_score * 100)
+                        command = f"{label_char}:{confidence_percent}"
+                    else:
+                        command = "N:0"
+
+                    self.arduino.write((command + '\n').encode())
+                    self.arduino.flush()
+
+                # Pamiętaj najlepsze ogólne wykrycie z ROI
+                for lbl, score in zip(filtered_labels, filtered_scores):
+                    if score > max_score:
+                        max_score = score
+                        max_label = int(lbl)
+
+            else:
+                filtered_labels, filtered_scores = [], []
 
             cv2.imshow("Detektor świateł drogowych", annotated)
             if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -299,6 +432,7 @@ class App:
                 self.arduino.flush()
                 self.best_detection_label.config(text="Nie wykryto świateł.")
                 print("[Koniec filmu] Nie wykryto świateł.")
+
 
 if __name__ == "__main__":
     root = Tk()
