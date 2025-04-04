@@ -1,8 +1,8 @@
 # yolov8-traffic_light_detection_with_Arduino
-This repo contains yolov8 training environment and simply GUI for test yolo model.
+This repo contains yolov8 training environment and simple GUI for test yolo model.
 
 # Concept
-The project focuses on traffic light detection using the yolov8m model. Additionally, detection is signaled by LEDs programmmed using Arduino UNO and the result is displayed with the greatest confidence on the LCD display.
+The project focuses on traffic light detection using the yolov8m model. Additionally, detection is signaled by LEDs programmed using Arduino UNO and the result is displayed with the greatest confidence on the LCD display.
 
 ### For example:
 
@@ -10,7 +10,7 @@ The project focuses on traffic light detection using the yolov8m model. Addition
 
 
 
-# Berofe use:
+# Before use:
 This project uses Pycharm version 2024.1.3. You can install libraries in Pycharm Terminal.
 
 - install Ultralytics:
@@ -62,7 +62,7 @@ The project uses a simple GUI that has two modes:
  ![gui](https://github.com/user-attachments/assets/247f15d0-801a-4eae-9e98-0df015fe4b5a)
 ### Detection without Arduino
 If you select detecion mode without Arduino (Detekcja bez Arduino) in the GUI you will be able to select the confidence level from which the detection should be displayed - using the slider. 
-Is it possible to select the video on which detection is to be performed - it must be in .mp4 format. You can also choose to enable or disable Region of Interest (ROI) - (Obszar zainteresowania) and choose from which side detection should be performed.
+You can select the video on which detection is to be performed - it must be in .mp4 format. You can also choose to enable or disable Region of Interest (ROI) - (Obszar zainteresowania) and choose from which side detection should be performed.
 
 ![bez arduino](https://github.com/user-attachments/assets/ef29dd1c-85cd-486f-865a-a5e0a245759d)
 
