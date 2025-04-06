@@ -2,7 +2,7 @@
 This repo contains yolov8 training environment and simple GUI for test yolo model.
 
 # Concept
-The project focuses on traffic light detection using the yolov8m model. Additionally, detection is signaled by LEDs programmed using Arduino UNO and the result is displayed with the greatest confidence on the LCD display.
+The project focuses on traffic light detection using the yolov8m model. Additionally, detection is signaled by LEDs programmed using Arduino UNO and the highest confidence detected is displayed on the LCD display.
 
 ### For example:
 
@@ -40,8 +40,8 @@ print(torch.cuda.is_available())
 print(torch.cuda.get_device_name(0))  -> USE IT IF YOU USE GPU!
 ```
 ### Arduino CLI
-If you want to compile .ino code from Python, you need to have it installed Arduino CLI (Command Line Interface). Download link: https://arduino.github.io/arduino-cli/1.2/ 
-- create a folder on your disk and move and unzip the downloaded Arduino CLI file file there
+If you want to compile .ino code from Python, you need to have Arduino CLI(Command Line Interface) installed. Download link: https://arduino.github.io/arduino-cli/1.2/ 
+- create a folder on your disk, move and unzip the downloaded Arduino CLI file there
 - run the file arduino-cli.exe and open new cmd window
 - in new cmd window go to the directory where you have the arduino-cli.exe file, for example:
 ```
